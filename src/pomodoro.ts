@@ -6,6 +6,7 @@ export class Pomodoro {
   private timer: NodeJS.Timeout | null = null;
   private onTick: ((state: PomodoroState) => void) | null = null;
   private onSessionComplete: ((session: SessionType) => void) | null = null;
+  private jamMode: boolean = false;
 
   constructor(config: Partial<PomodoroConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
@@ -31,6 +32,35 @@ export class Pomodoro {
 
   getConfig(): PomodoroConfig {
     return { ...this.config };
+  }
+
+  // Set jam mode - when enabled, prevents local timer ticks (participant mode)
+  setJamMode(enabled: boolean): void {
+    this.jamMode = enabled;
+  }
+
+  isJamMode(): boolean {
+    return this.jamMode;
+  }
+
+  // Apply external state (for jam session participants receiving host state)
+  setState(newState: PomodoroState): void {
+    const wasRunning = this.state.isRunning;
+    const nowRunning = newState.isRunning;
+
+    this.state = { ...newState };
+
+    // Handle timer sync for participants
+    if (this.jamMode) {
+      // In jam mode (participant), we don't run our own timer
+      // Just apply the state from the host
+      if (this.timer) {
+        clearInterval(this.timer);
+        this.timer = null;
+      }
+    }
+
+    this.onTick?.(this.getState());
   }
 
   start(): void {

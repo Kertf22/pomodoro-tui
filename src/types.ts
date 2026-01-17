@@ -35,3 +35,13 @@ export interface PomodoroHistory {
   totalPomodoros: number;
   lastUpdated: string;
 }
+
+// Jam session types
+export type JamConnectionState = 'disconnected' | 'connecting' | 'connected' | 'error';
+
+export interface JamParticipant {
+  id: string;
+  name: string;
+  isHost: boolean;
+  joinedAt: number;
+}

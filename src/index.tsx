@@ -1,17 +1,33 @@
-import React, { useState, useEffect } from 'react';
-import { render, Box, Text, useInput, useApp } from 'ink';
-import { parseArgs } from 'util';
-import { Pomodoro } from './pomodoro';
-import { HistoryManager } from './history';
-import { MusicManager, type MusicMode } from './music';
-import type { PomodoroConfig, PomodoroState, SessionType } from './types';
-import { DEFAULT_CONFIG } from './types';
+import React, { useState, useEffect, useRef } from "react";
+import { render, Box, Text, useInput, useApp } from "ink";
+import { parseArgs } from "util";
+import { Pomodoro } from "./pomodoro";
+import { HistoryManager } from "./history";
+import { MusicManager, type MusicMode } from "./music";
+import { JamManager, validateSessionCode, normalizeSessionCode } from "./jam";
+import type {
+  PomodoroConfig,
+  PomodoroState,
+  SessionType,
+  JamParticipant,
+  JamConnectionState,
+} from "./types";
+import { DEFAULT_CONFIG } from "./types";
+
+interface JamConfig {
+  enabled: boolean;
+  isHost: boolean;
+  sessionCode?: string;
+  participantName: string;
+  server?: string;
+}
 
 interface AppConfig {
   pomodoro: PomodoroConfig;
   historyFile?: string;
   musicMode: MusicMode;
   spotifyToken?: string;
+  jam: JamConfig;
 }
 
 function showHelp(): void {
@@ -30,6 +46,12 @@ Options:
   --spotify-token <token>  Spotify access token for now-playing display
   -h, --help               Show this help message
 
+Jam Session (collaborative mode):
+  --host                   Host a new jam session
+  --join <code>            Join an existing jam session by code
+  --name <name>            Your display name in the session (default: User)
+  --server <url>           Custom PartyKit server URL
+
 Examples:
   pomotui                              # Use default durations (25/5/15)
   pomotui -w 50 -s 10 -l 30            # 50min work, 10min short, 30min long
@@ -37,10 +59,13 @@ Examples:
   pomotui -d ~/obsidian/pomodoro.json  # Custom history file
   pomotui -m off                       # Disable music
   pomotui -m spotify --spotify-token <token>  # Spotify mode
+  pomotui --host --name "Alice"        # Host a jam session
+  pomotui --join XYZ234 --name "Bob"   # Join a jam session
 
 Controls:
   [s] Start    [p] Pause    [r] Reset    [n] Next    [q] Quit
   [m] Toggle music    [>] Next station
+  (In jam mode, only the host can control the timer)
 
 Music:
   Lofi radio plays automatically during work sessions and pauses during breaks.
@@ -57,14 +82,19 @@ function parseConfig(): AppConfig | null {
     const { values } = parseArgs({
       args: Bun.argv.slice(2),
       options: {
-        work: { type: 'string', short: 'w' },
-        short: { type: 'string', short: 's' },
-        long: { type: 'string', short: 'l' },
-        cycles: { type: 'string', short: 'c' },
-        data: { type: 'string', short: 'd' },
-        music: { type: 'string', short: 'm' },
-        'spotify-token': { type: 'string' },
-        help: { type: 'boolean', short: 'h' },
+        work: { type: "string", short: "w" },
+        short: { type: "string", short: "s" },
+        long: { type: "string", short: "l" },
+        cycles: { type: "string", short: "c" },
+        data: { type: "string", short: "d" },
+        music: { type: "string", short: "m" },
+        "spotify-token": { type: "string" },
+        help: { type: "boolean", short: "h" },
+        // Jam session options
+        host: { type: "boolean" },
+        join: { type: "string" },
+        name: { type: "string" },
+        server: { type: "string" },
       },
       strict: true,
     });
@@ -79,7 +109,7 @@ function parseConfig(): AppConfig | null {
     if (values.work) {
       const work = parseInt(values.work, 10);
       if (isNaN(work) || work < 1) {
-        console.error('Error: Work duration must be a positive number');
+        console.error("Error: Work duration must be a positive number");
         process.exit(1);
       }
       pomodoro.workDuration = work;
@@ -88,7 +118,7 @@ function parseConfig(): AppConfig | null {
     if (values.short) {
       const short = parseInt(values.short, 10);
       if (isNaN(short) || short < 1) {
-        console.error('Error: Short break duration must be a positive number');
+        console.error("Error: Short break duration must be a positive number");
         process.exit(1);
       }
       pomodoro.shortBreakDuration = short;
@@ -97,7 +127,7 @@ function parseConfig(): AppConfig | null {
     if (values.long) {
       const long = parseInt(values.long, 10);
       if (isNaN(long) || long < 1) {
-        console.error('Error: Long break duration must be a positive number');
+        console.error("Error: Long break duration must be a positive number");
         process.exit(1);
       }
       pomodoro.longBreakDuration = long;
@@ -106,65 +136,96 @@ function parseConfig(): AppConfig | null {
     if (values.cycles) {
       const cycles = parseInt(values.cycles, 10);
       if (isNaN(cycles) || cycles < 1) {
-        console.error('Error: Cycles must be a positive number');
+        console.error("Error: Cycles must be a positive number");
         process.exit(1);
       }
       pomodoro.pomodorosBeforeLongBreak = cycles;
     }
 
-    let musicMode: MusicMode = 'radio';
+    let musicMode: MusicMode = "radio";
     if (values.music) {
-      if (!['radio', 'spotify', 'off'].includes(values.music)) {
-        console.error('Error: Music mode must be one of: radio, spotify, off');
+      if (!["radio", "spotify", "off"].includes(values.music)) {
+        console.error("Error: Music mode must be one of: radio, spotify, off");
         process.exit(1);
       }
       musicMode = values.music as MusicMode;
     }
 
+    // Jam session config
+    const jamEnabled = values.host || !!values.join;
+    const isHost = values.host || false;
+    const sessionCode = values.join
+      ? normalizeSessionCode(values.join)
+      : undefined;
+
+    if (values.join && !validateSessionCode(values.join)) {
+      console.error(
+        "Error: Invalid session code. Must be 6 characters (e.g., XYZ234)",
+      );
+      process.exit(1);
+    }
+
+    if (values.host && values.join) {
+      console.error("Error: Cannot use both --host and --join");
+      process.exit(1);
+    }
+
+    const jam: JamConfig = {
+      enabled: jamEnabled,
+      isHost,
+      sessionCode,
+      participantName: values.name || "User",
+      server: values.server,
+    };
+
     return {
       pomodoro,
       historyFile: values.data,
       musicMode,
-      spotifyToken: values['spotify-token'],
+      spotifyToken: values["spotify-token"],
+      jam,
     };
   } catch (error) {
     if (error instanceof Error) {
       console.error(`Error: ${error.message}`);
     }
-    console.error('Use --help for usage information');
+    console.error("Use --help for usage information");
     process.exit(1);
   }
 }
 
 function getSessionColor(session: SessionType): string {
   switch (session) {
-    case 'work':
-      return 'red';
-    case 'shortBreak':
-      return 'green';
-    case 'longBreak':
-      return 'blue';
+    case "work":
+      return "red";
+    case "shortBreak":
+      return "green";
+    case "longBreak":
+      return "blue";
   }
 }
 
 function getSessionLabel(session: SessionType): string {
   switch (session) {
-    case 'work':
-      return 'WORK';
-    case 'shortBreak':
-      return 'SHORT BREAK';
-    case 'longBreak':
-      return 'LONG BREAK';
+    case "work":
+      return "WORK";
+    case "shortBreak":
+      return "SHORT BREAK";
+    case "longBreak":
+      return "LONG BREAK";
   }
 }
 
-function getSessionDuration(session: SessionType, config: PomodoroConfig): number {
+function getSessionDuration(
+  session: SessionType,
+  config: PomodoroConfig,
+): number {
   switch (session) {
-    case 'work':
+    case "work":
       return config.workDuration;
-    case 'shortBreak':
+    case "shortBreak":
       return config.shortBreakDuration;
-    case 'longBreak':
+    case "longBreak":
       return config.longBreakDuration;
   }
 }
@@ -173,15 +234,17 @@ function notifyUser(): void {
   const platform = process.platform;
   let command: string;
 
-  if (platform === 'darwin') {
-    command = 'afplay /System/Library/Sounds/Glass.aiff';
-  } else if (platform === 'win32') {
-    command = 'powershell -c "(New-Object Media.SoundPlayer \'C:\\Windows\\Media\\notify.wav\').PlaySync()"';
+  if (platform === "darwin") {
+    command = "afplay /System/Library/Sounds/Glass.aiff";
+  } else if (platform === "win32") {
+    command =
+      "powershell -c \"(New-Object Media.SoundPlayer 'C:\\Windows\\Media\\notify.wav').PlaySync()\"";
   } else {
-    command = 'paplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null || aplay /usr/share/sounds/alsa/Front_Center.wav 2>/dev/null || true';
+    command =
+      "paplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null || aplay /usr/share/sounds/alsa/Front_Center.wav 2>/dev/null || true";
   }
 
-  Bun.spawn(['sh', '-c', command], { stdout: 'ignore', stderr: 'ignore' });
+  Bun.spawn(["sh", "-c", command], { stdout: "ignore", stderr: "ignore" });
 }
 
 interface PomodoroTUIProps {
@@ -192,10 +255,33 @@ function PomodoroTUI({ config }: PomodoroTUIProps) {
   const { exit } = useApp();
   const [pomodoro] = useState(() => new Pomodoro(config.pomodoro));
   const [history] = useState(() => new HistoryManager(config.historyFile));
-  const [music] = useState(() => new MusicManager(config.musicMode, config.spotifyToken));
+  const [music] = useState(
+    () => new MusicManager(config.musicMode, config.spotifyToken),
+  );
   const [state, setState] = useState<PomodoroState>(pomodoro.getState());
   const [todayStats, setTodayStats] = useState(history.getTodayStats());
   const [musicStatus, setMusicStatus] = useState(music.getStatusText());
+
+  // Jam session state
+  const [jamManager, setJamManager] = useState<JamManager | null>(null);
+  const [jamParticipants, setJamParticipants] = useState<JamParticipant[]>([]);
+  const [jamConnectionState, setJamConnectionState] =
+    useState<JamConnectionState>("disconnected");
+  const [jamSessionCode, setJamSessionCode] = useState<string>("");
+  const [isCurrentHost, setIsCurrentHost] = useState<boolean>(config.jam.isHost);
+
+  // Refs to access current values in useInput callback (avoids stale closure)
+  const jamManagerRef = useRef<JamManager | null>(null);
+  const jamParticipantsRef = useRef<JamParticipant[]>([]);
+  const isCurrentHostRef = useRef<boolean>(config.jam.isHost);
+
+  // Keep refs in sync with state
+  useEffect(() => { jamManagerRef.current = jamManager; }, [jamManager]);
+  useEffect(() => { jamParticipantsRef.current = jamParticipants; }, [jamParticipants]);
+  useEffect(() => { isCurrentHostRef.current = isCurrentHost; }, [isCurrentHost]);
+
+  const isJamMode = config.jam.enabled;
+  const canControl = !isJamMode || isCurrentHost;
 
   useEffect(() => {
     pomodoro.setOnTick((newState) => {
@@ -208,7 +294,7 @@ function PomodoroTUI({ config }: PomodoroTUIProps) {
       setTodayStats(history.getTodayStats());
 
       const nextState = pomodoro.getState();
-      if (nextState.currentSession === 'work') {
+      if (nextState.currentSession === "work") {
         await music.play();
       } else {
         music.pause();
@@ -217,34 +303,81 @@ function PomodoroTUI({ config }: PomodoroTUIProps) {
       notifyUser();
     });
 
+    // Initialize jam session if enabled
+    if (config.jam.enabled) {
+      const manager = new JamManager({
+        pomodoro,
+        isHost: config.jam.isHost,
+        sessionCode: config.jam.sessionCode,
+        participantName: config.jam.participantName,
+        server: config.jam.server,
+        onStateChange: () => setState(pomodoro.getState()),
+        onParticipantsChange: (participants) =>
+          setJamParticipants(participants),
+        onConnectionChange: (connState) => setJamConnectionState(connState),
+        onHostChange: (isHost) => setIsCurrentHost(isHost),
+      });
+
+      setJamManager(manager);
+      setJamSessionCode(manager.getSessionCode());
+
+      manager.connect().catch((err) => {
+        console.error("Failed to connect to jam session:", err);
+      });
+    }
+
     return () => {
       music.cleanup();
+      jamManager?.disconnect();
     };
   }, []);
 
   useInput((input, key) => {
-    if (input === 'q' || key.escape || (key.ctrl && input === 'c')) {
+    if (input === "q" || key.escape || (key.ctrl && input === "c")) {
       music.cleanup();
-      console.log(`\nGoodbye! You completed ${state.completedPomodoros} pomodoros.`);
+      jamManager?.disconnect();
+      console.log(
+        `\nGoodbye! You completed ${state.completedPomodoros} pomodoros.`,
+      );
       exit();
-    } else if (input === 's') {
+    } else if (input === "s" && canControl) {
       pomodoro.start();
-      if (state.currentSession === 'work') {
+      jamManager?.sendControl("start");
+      if (state.currentSession === "work") {
         music.play();
         setMusicStatus(music.getStatusText());
       }
-    } else if (input === 'p') {
+    } else if (input === "p" && canControl) {
       pomodoro.pause();
-    } else if (input === 'r') {
+      jamManager?.sendControl("pause");
+    } else if (input === "r" && canControl) {
       pomodoro.reset();
-    } else if (input === 'n') {
+      jamManager?.sendControl("reset");
+    } else if (input === "n" && canControl) {
       pomodoro.skip();
-    } else if (input === 'm') {
+      jamManager?.sendControl("skip");
+    } else if (input === "m") {
       music.toggle();
       setMusicStatus(music.getStatusText());
-    } else if (input === '>' || input === '.') {
+    } else if (input === ">" || input === ".") {
       music.nextStation();
       setMusicStatus(music.getStatusText());
+    } else if (/^[1-9]$/.test(input)) {
+      // Host can transfer to another participant by pressing 1-9
+      const manager = jamManagerRef.current;
+      const participants = jamParticipantsRef.current;
+      const amHost = isCurrentHostRef.current;
+
+      if (amHost && manager) {
+        const myId = manager.getParticipantId();
+        const otherParticipants = participants.filter(
+          p => p.id !== myId && !p.isHost
+        );
+        const index = parseInt(input, 10) - 1;
+        if (index < otherParticipants.length) {
+          manager.transferHost(otherParticipants[index].id);
+        }
+      }
     }
   });
 
@@ -256,13 +389,41 @@ function PomodoroTUI({ config }: PomodoroTUIProps) {
   const progress = (state.timeRemaining / (sessionDuration * 60)) * 100;
   const progressBarLength = 40;
   const filledLength = Math.round((progressBarLength * progress) / 100);
-  const progressBar = '█'.repeat(filledLength) + '░'.repeat(progressBarLength - filledLength);
+  const progressBar =
+    "█".repeat(filledLength) + "░".repeat(progressBarLength - filledLength);
+
+  // Connection state display
+  const getConnectionDisplay = () => {
+    switch (jamConnectionState) {
+      case "connected":
+        return { symbol: "●", color: "green", text: "Connected" };
+      case "connecting":
+        return { symbol: "○", color: "yellow", text: "Connecting..." };
+      case "error":
+        return { symbol: "●", color: "red", text: "Error" };
+      default:
+        return { symbol: "○", color: "gray", text: "Disconnected" };
+    }
+  };
+
+  const connDisplay = getConnectionDisplay();
 
   return (
-    <Box flexDirection="column" alignItems="center" justifyContent="center" borderStyle="round" borderColor="cyan" padding={1}>
-      <Text bold color="white">POMODORO TIMER</Text>
+    <Box
+      flexDirection="column"
+      alignItems="center"
+      justifyContent="center"
+      borderStyle="round"
+      borderColor="cyan"
+      padding={1}
+    >
+      <Text bold color="white">
+        POMODORO TIMER
+      </Text>
       <Box marginY={1}>
-        <Text bold color={color}>{label}</Text>
+        <Text bold color={color}>
+          {label}
+        </Text>
       </Box>
       <Box marginY={1}>
         <Text bold color="white">{`     ${time}     `}</Text>
@@ -271,13 +432,67 @@ function PomodoroTUI({ config }: PomodoroTUIProps) {
         <Text color={color}>{progressBar}</Text>
       </Box>
       <Box marginY={1}>
-        <Text color={state.isRunning ? 'green' : 'yellow'}>
-          {state.isRunning ? '[ RUNNING ]' : '[ PAUSED ]'}
+        <Text color={state.isRunning ? "green" : "yellow"}>
+          {state.isRunning ? "[ RUNNING ]" : "[ PAUSED ]"}
         </Text>
       </Box>
-      <Box marginY={1}>
-        <Text color="gray">{`Today: ${todayStats.pomodoros} pomodoros (${todayStats.totalMinutes}m)`}</Text>
-      </Box>
+
+      {/* Jam Session Info */}
+      {isJamMode && (
+        <>
+          <Box marginY={1} flexDirection="column" alignItems="center">
+            <Text color="yellow" bold>{`JAM SESSION: ${jamSessionCode}`}</Text>
+            <Box>
+              <Text color={connDisplay.color as any}>
+                {connDisplay.symbol} {connDisplay.text}
+              </Text>
+            </Box>
+          </Box>
+
+          {jamParticipants.length > 0 && (
+            <Box marginY={1} flexDirection="column" alignItems="center">
+              <Text color="gray">{`Participants (${jamParticipants.length}):`}</Text>
+              {(() => {
+                const myId = jamManager?.getParticipantId();
+                const otherParticipants = jamParticipants.filter(p => p.id !== myId);
+                let transferIndex = 0;
+                return jamParticipants.map((p) => {
+                  const isMe = p.id === myId;
+                  const canTransferTo = isCurrentHost && !p.isHost && !isMe;
+                  const transferNum = canTransferTo ? ++transferIndex : 0;
+                  return (
+                    <Text key={p.id} color={isMe ? "cyan" : "white"}>
+                      {p.isHost ? "★" : canTransferTo ? `[${transferNum}]` : "•"} {p.name}
+                      {p.isHost ? " (host)" : ""}
+                      {isMe ? " (you)" : ""}
+                    </Text>
+                  );
+                });
+              })()}
+            </Box>
+          )}
+
+          {!canControl && (
+            <Box marginY={1}>
+              <Text color="gray" dimColor>
+                Only the host can control the timer
+              </Text>
+            </Box>
+          )}
+
+          {isCurrentHost && (
+            <Box marginY={1}>
+              <Text color="gray">Share: pomotui --join {jamSessionCode}</Text>
+            </Box>
+          )}
+        </>
+      )}
+
+      {!isJamMode && (
+        <Box marginY={1}>
+          <Text color="gray">{`Today: ${todayStats.pomodoros} pomodoros (${todayStats.totalMinutes}m)`}</Text>
+        </Box>
+      )}
       <Box marginY={1}>
         <Text color="gray">
           {`Work: ${config.pomodoro.workDuration}m | Short: ${config.pomodoro.shortBreakDuration}m | Long: ${config.pomodoro.longBreakDuration}m`}
@@ -287,8 +502,17 @@ function PomodoroTUI({ config }: PomodoroTUIProps) {
         <Text color="magenta">{musicStatus}</Text>
       </Box>
       <Box marginTop={1}>
-        <Text color="cyan">[s]tart [p]ause [r]eset [n]ext [q]uit [m]usic [{'>'}/.]station</Text>
+        <Text color="cyan">
+          {canControl
+            ? `[s]tart [p]ause [r]eset [n]ext [q]uit [m]usic [>/.]station`
+            : `[q]uit [m]usic [>/.]station`}
+        </Text>
       </Box>
+      {isCurrentHost && jamParticipants.length > 1 && (
+        <Box>
+          <Text color="gray">[1-9] transfer host</Text>
+        </Box>
+      )}
     </Box>
   );
 }
