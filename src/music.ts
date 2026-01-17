@@ -49,10 +49,12 @@ export class RadioPlayer {
   private detectPlayer(): void {
     // Try to find an available audio player
     const players = ['mpv', 'ffplay', 'cvlc', 'mplayer'];
+    // Use 'where' on Windows, 'which' on Unix-like systems
+    const whichCommand = process.platform === 'win32' ? 'where' : 'which';
 
     for (const player of players) {
       try {
-        const result = Bun.spawnSync(['which', player]);
+        const result = Bun.spawnSync([whichCommand, player]);
         if (result.exitCode === 0) {
           this.playerCommand = player;
           break;
