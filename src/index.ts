@@ -1,4 +1,5 @@
 import * as readline from 'readline';
+import { exec } from 'child_process';
 import { Pomodoro } from './pomodoro';
 import { PomodoroState, SessionType } from './types';
 
@@ -45,8 +46,25 @@ class PomodoroApp {
   }
 
   private notifyUser(): void {
-    // Terminal bell
+    // Terminal bell as fallback
     process.stdout.write('\x07');
+
+    // Play notification sound based on platform
+    const platform = process.platform;
+    let command: string;
+
+    if (platform === 'darwin') {
+      // macOS
+      command = 'afplay /System/Library/Sounds/Glass.aiff';
+    } else if (platform === 'win32') {
+      // Windows
+      command = 'powershell -c "(New-Object Media.SoundPlayer \'C:\\Windows\\Media\\notify.wav\').PlaySync()"';
+    } else {
+      // Linux - try common sound players
+      command = 'paplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null || aplay /usr/share/sounds/alsa/Front_Center.wav 2>/dev/null || true';
+    }
+
+    exec(command, () => {});
   }
 
   private showHelp(): void {
