@@ -52,5 +52,5 @@ export function getPlatformInfo(): PlatformInfo {
 
 export function getCurrentVersion(): string {
   // Read from package.json at build time - Bun embeds this
-  return "0.0.7";
+  return "0.0.8";
 }
