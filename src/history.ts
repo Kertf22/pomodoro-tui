@@ -23,7 +23,7 @@ export class HistoryManager {
       if (file.size === 0) {
         return this.createEmpty();
       }
-      const content = require(this.filePath);
+      const content = JSON.parse(fs.readFileSync(this.filePath, 'utf-8'));
       return content as PomodoroHistory;
     } catch {
       return this.createEmpty();
