@@ -1,10 +1,15 @@
-import type { Subprocess } from 'bun';
+import type { Subprocess } from "bun";
+import { existsSync, unlinkSync } from "fs";
+import { connect } from "net";
+import { tmpdir } from "os";
+import { join } from "path";
 
 export interface MusicStatus {
   isPlaying: boolean;
   stationName: string;
   stationIndex: number;
   totalStations: number;
+  volume: number;
 }
 
 export interface LofiStation {
@@ -15,36 +20,36 @@ export interface LofiStation {
 // Curated list of lofi radio streams
 export const LOFI_STATIONS: LofiStation[] = [
   {
-    name: 'Lofi Girl',
-    url: 'https://play.streamafrica.net/lofiradio',
+    name: "Lofi Girl",
+    url: "https://play.streamafrica.net/lofiradio",
   },
   {
-    name: 'ChillHop',
-    url: 'https://streams.fluxfm.de/Chillhop/mp3-128/streams.fluxfm.de/',
+    name: "ChillHop",
+    url: "https://streams.fluxfm.de/Chillhop/mp3-128/streams.fluxfm.de/",
   },
   {
-    name: 'Box Lofi',
-    url: 'https://stream.zeno.fm/f3wvbbqmdg8uv',
+    name: "Box Lofi",
+    url: "https://stream.zeno.fm/f3wvbbqmdg8uv",
   },
   {
-    name: 'Lofi Cafe',
-    url: 'https://stream.zeno.fm/0r0xa792kwzuv',
+    name: "Lofi Cafe",
+    url: "https://stream.zeno.fm/0r0xa792kwzuv",
   },
   {
-    name: 'Study Beats',
-    url: 'https://stream.zeno.fm/yn65fsaurfhvv',
+    name: "Study Beats",
+    url: "https://stream.zeno.fm/yn65fsaurfhvv",
   },
   {
-    name: 'Antena 1',
-    url: 'https://radio.garden/api/ara/content/listen/Q6JROd6G/channel.mp3',
+    name: "Antena 1",
+    url: "https://radio.garden/api/ara/content/listen/Q6JROd6G/channel.mp3",
   },
   {
-    name: 'FM Sergipe',
-    url: 'https://radio.garden/api/ara/content/listen/EQzCDHL3/channel.mp3',
+    name: "FM Sergipe",
+    url: "https://radio.garden/api/ara/content/listen/EQzCDHL3/channel.mp3",
   },
   {
-    name: 'Smooth Jazz',
-    url: 'https://radio.garden/api/ara/content/listen/1vlrqH6v/channel.mp3',
+    name: "Smooth Jazz",
+    url: "https://radio.garden/api/ara/content/listen/1vlrqH6v/channel.mp3",
   },
 ];
 
@@ -53,16 +58,25 @@ export class RadioPlayer {
   private currentStationIndex: number = 0;
   private isPlaying: boolean = false;
   private playerCommand: string | null = null;
+  private volume: number = 50;
+  private mpvSocketPath: string;
 
-  constructor() {
+  constructor(initialVolume: number = 50) {
+    this.volume = Math.max(0, Math.min(100, initialVolume));
+    // Windows uses named pipes, Unix uses socket files
+    if (process.platform === "win32") {
+      this.mpvSocketPath = `\\\\.\\pipe\\pomotui-mpv-${process.pid}`;
+    } else {
+      this.mpvSocketPath = join(tmpdir(), `pomotui-mpv-${process.pid}.sock`);
+    }
     this.detectPlayer();
   }
 
   private detectPlayer(): void {
     // Try to find an available audio player
-    const players = ['mpv', 'ffplay', 'cvlc', 'mplayer'];
+    const players = ["mpv"];
     // Use 'where' on Windows, 'which' on Unix-like systems
-    const whichCommand = process.platform === 'win32' ? 'where' : 'which';
+    const whichCommand = process.platform === "win32" ? "where" : "which";
 
     for (const player of players) {
       try {
@@ -95,9 +109,9 @@ export class RadioPlayer {
     try {
       const args = this.getPlayerArgs(station.url);
       this.process = Bun.spawn([this.playerCommand, ...args], {
-        stdin: 'ignore',
-        stdout: 'ignore',
-        stderr: 'ignore',
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
       });
       this.isPlaying = true;
       return true;
@@ -107,17 +121,40 @@ export class RadioPlayer {
   }
 
   private getPlayerArgs(url: string): string[] {
-    switch (this.playerCommand) {
-      case 'mpv':
-        return ['--no-video', '--really-quiet', url];
-      case 'ffplay':
-        return ['-nodisp', '-autoexit', '-loglevel', 'quiet', url];
-      case 'cvlc':
-        return ['--intf', 'dummy', '--quiet', url];
-      case 'mplayer':
-        return ['-really-quiet', '-noconsolecontrols', url];
-      default:
-        return [url];
+    return [
+      "--no-video",
+      "--really-quiet",
+      `--volume=${this.volume}`,
+      `--input-ipc-server=${this.mpvSocketPath}`,
+      url,
+    ];
+  }
+
+  private sendMpvCommand(command: unknown[]): void {
+    if (!this.isPlaying) return;
+    // On Windows, named pipes don't exist as files, so skip the existsSync check
+    if (process.platform !== "win32" && !existsSync(this.mpvSocketPath)) return;
+
+    try {
+      const socket = connect(this.mpvSocketPath);
+      const message = JSON.stringify({ command }) + "\n";
+      socket.write(message);
+      socket.end();
+    } catch {
+      // Socket connection failed, ignore
+    }
+  }
+
+  private cleanupSocket(): void {
+    // Windows named pipes are automatically cleaned up, no need to unlink
+    if (process.platform === "win32") return;
+
+    try {
+      if (existsSync(this.mpvSocketPath)) {
+        unlinkSync(this.mpvSocketPath);
+      }
+    } catch {
+      // Ignore cleanup errors
     }
   }
 
@@ -127,6 +164,7 @@ export class RadioPlayer {
       this.process = null;
     }
     this.isPlaying = false;
+    this.cleanupSocket();
   }
 
   pause(): void {
@@ -149,7 +187,8 @@ export class RadioPlayer {
   nextStation(): void {
     const wasPlaying = this.isPlaying;
     this.stop();
-    this.currentStationIndex = (this.currentStationIndex + 1) % LOFI_STATIONS.length;
+    this.currentStationIndex =
+      (this.currentStationIndex + 1) % LOFI_STATIONS.length;
     if (wasPlaying) {
       this.play();
     }
@@ -158,7 +197,9 @@ export class RadioPlayer {
   previousStation(): void {
     const wasPlaying = this.isPlaying;
     this.stop();
-    this.currentStationIndex = (this.currentStationIndex - 1 + LOFI_STATIONS.length) % LOFI_STATIONS.length;
+    this.currentStationIndex =
+      (this.currentStationIndex - 1 + LOFI_STATIONS.length) %
+      LOFI_STATIONS.length;
     if (wasPlaying) {
       this.play();
     }
@@ -182,7 +223,32 @@ export class RadioPlayer {
       stationName: station.name,
       stationIndex: this.currentStationIndex,
       totalStations: LOFI_STATIONS.length,
+      volume: this.volume,
     };
+  }
+
+  getVolume(): number {
+    return this.volume;
+  }
+
+  setVolume(level: number): void {
+    const newVolume = Math.max(0, Math.min(100, level));
+    if (newVolume === this.volume) return;
+
+    this.volume = newVolume;
+
+    // Use IPC to change volume without restart
+    if (this.isPlaying) {
+      this.sendMpvCommand(["set_property", "volume", this.volume]);
+    }
+  }
+
+  volumeUp(step: number = 10): void {
+    this.setVolume(this.volume + step);
+  }
+
+  volumeDown(step: number = 10): void {
+    this.setVolume(this.volume - step);
   }
 
   getCurrentStation(): LofiStation {
@@ -194,24 +260,24 @@ export class RadioPlayer {
   }
 }
 
-export type MusicMode = 'radio' | 'off';
+export type MusicMode = "radio" | "off";
 
 export class MusicManager {
   private mode: MusicMode;
   private radio: RadioPlayer;
 
-  constructor(mode: MusicMode = 'radio') {
+  constructor(mode: MusicMode = "radio", initialVolume: number = 50) {
     this.mode = mode;
-    this.radio = new RadioPlayer();
+    this.radio = new RadioPlayer(initialVolume);
   }
 
   async play(): Promise<boolean> {
-    if (this.mode === 'off') return false;
+    if (this.mode === "off") return false;
     return this.radio.play();
   }
 
   stop(): void {
-    if (this.mode === 'radio') {
+    if (this.mode === "radio") {
       this.radio.stop();
     }
   }
@@ -225,28 +291,28 @@ export class MusicManager {
   }
 
   async toggle(): Promise<boolean> {
-    if (this.mode === 'radio') {
+    if (this.mode === "radio") {
       return this.radio.toggle();
     }
     return false;
   }
 
   nextStation(): void {
-    if (this.mode === 'radio') {
+    if (this.mode === "radio") {
       this.radio.nextStation();
     }
   }
 
   getStatusText(): string {
-    if (this.mode === 'off') {
-      return 'Music: Off';
+    if (this.mode === "off") {
+      return "Music: Off";
     }
 
     // Radio mode
     const status = this.radio.getStatus();
-    const icon = status.isPlaying ? '♪' : '♪';
-    const state = status.isPlaying ? '' : ' (paused)';
-    return `${icon} ${status.stationName}${state}`;
+    const icon = status.isPlaying ? "♪" : "♪";
+    const state = status.isPlaying ? "" : " (paused)";
+    return `${icon} ${status.stationName}${state} [${status.volume}%]`;
   }
 
   getMode(): MusicMode {
@@ -254,17 +320,33 @@ export class MusicManager {
   }
 
   isPlaying(): boolean {
-    if (this.mode === 'radio') {
+    if (this.mode === "radio") {
       return this.radio.getStatus().isPlaying;
     }
     return false;
   }
 
   hasPlayer(): boolean {
-    if (this.mode === 'radio') {
+    if (this.mode === "radio") {
       return this.radio.getAvailablePlayer() !== null;
     }
     return true;
+  }
+
+  getVolume(): number {
+    return this.radio.getVolume();
+  }
+
+  setVolume(level: number): void {
+    this.radio.setVolume(level);
+  }
+
+  volumeUp(step: number = 10): void {
+    this.radio.volumeUp(step);
+  }
+
+  volumeDown(step: number = 10): void {
+    this.radio.volumeDown(step);
   }
 
   cleanup(): void {

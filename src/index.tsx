@@ -29,7 +29,7 @@ function PomodoroTUI({ config }: PomodoroTUIProps) {
   const { exit } = useApp();
   const [pomodoro] = useState(() => new Pomodoro(config.pomodoro));
   const [history] = useState(() => new HistoryManager(config.historyFile));
-  const [music] = useState(() => new MusicManager(config.musicMode));
+  const [music] = useState(() => new MusicManager(config.musicMode, config.volume));
   const [state, setState] = useState<PomodoroState>(pomodoro.getState());
   const [todayStats, setTodayStats] = useState(history.getTodayStats());
   const [musicStatus, setMusicStatus] = useState(music.getStatusText());
@@ -157,7 +157,7 @@ function PomodoroTUI({ config }: PomodoroTUIProps) {
         pomodoro,
         isHost: config.jam.isHost,
         sessionCode: config.jam.sessionCode,
-        participantName: config.jam.participantName,
+        participantName: config.jam.participantName || '',
         server: config.jam.server,
         onStateChange: () => setState(pomodoro.getState()),
         onParticipantsChange: (participants) => setJamParticipants(participants),
@@ -482,6 +482,12 @@ function PomodoroTUI({ config }: PomodoroTUIProps) {
       setMusicStatus(music.getStatusText());
     } else if (input === ">" || input === ".") {
       music.nextStation();
+      setMusicStatus(music.getStatusText());
+    } else if (input === "+" || input === "=") {
+      music.volumeUp();
+      setMusicStatus(music.getStatusText());
+    } else if (input === "-" || input === "_") {
+      music.volumeDown();
       setMusicStatus(music.getStatusText());
     } else if (input === "h" && activeTab === "group" && !jamManager) {
       startHosting();

@@ -16,6 +16,7 @@ export interface AppConfig {
   pomodoro: PomodoroConfig;
   historyFile?: string;
   musicMode: MusicMode;
+  volume: number;
   jam: JamConfig;
 }
 
@@ -32,6 +33,7 @@ Options:
   -c, --cycles <number>    Pomodoros before long break (default: ${DEFAULT_CONFIG.pomodorosBeforeLongBreak})
   -d, --data <path>        Path to history JSON file (default: ~/.pomodoro/history.json)
   -m, --music <mode>       Music mode: radio, off (default: radio)
+  -V, --volume <0-100>     Music volume level (default: 50)
   -v, --version            Show version number
   --update                 Check for and install updates
   -h, --help               Show this help message
@@ -53,7 +55,7 @@ Examples:
 
 Controls:
   [s] Start    [p] Pause    [r] Reset    [n] Next    [q] Quit
-  [m] Toggle music    [>] Next station
+  [m] Toggle music    [>] Next station    [+/-] Volume up/down
   (In jam mode, only the host can control the timer)
 
 Music:
@@ -89,6 +91,7 @@ export function parseConfig(): AppConfig | null {
         cycles: { type: "string", short: "c" },
         data: { type: "string", short: "d" },
         music: { type: "string", short: "m" },
+        volume: { type: "string", short: "V" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
         update: { type: "boolean" },
@@ -161,6 +164,15 @@ export function parseConfig(): AppConfig | null {
       musicMode = values.music as MusicMode;
     }
 
+    let volume = 50;
+    if (values.volume) {
+      const vol = parseInt(values.volume, 10);
+      if (isNaN(vol) || vol < 0 || vol > 100) {
+        process.exit(1);
+      }
+      volume = vol;
+    }
+
     const jamEnabled = values.host || !!values.join;
     const isHost = values.host || false;
     const sessionCode = values.join
@@ -191,6 +203,7 @@ export function parseConfig(): AppConfig | null {
       pomodoro,
       historyFile: values.data,
       musicMode,
+      volume,
       jam,
     };
   } catch (error) {
