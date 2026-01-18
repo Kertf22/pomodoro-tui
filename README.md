@@ -10,7 +10,7 @@ A terminal-based Pomodoro timer with lofi music integration, built with Bun, Ink
 - Full-screen TUI with progress bar and session tracking
 - Configurable work/break durations
 - Lofi radio streaming during work sessions
-- Collaborative jam sessions for real-time multiplayer pomodoro
+- Collaborative group sessions for real-time multiplayer pomodoro
 - Session history saved to JSON (for Obsidian/tool integration)
 - Cross-platform notification sounds
 
@@ -117,9 +117,9 @@ bun run start -d ~/obsidian/pomodoro.json
 | `--cycles <n>` | `-c` | Pomodoros before long break | 4 |
 | `--data <path>` | `-d` | History file path | ~/.pomodoro/history.json |
 | `--music <mode>` | `-m` | Music mode: radio, off | radio |
-| `--host` | | Host a jam session | |
-| `--join <code>` | | Join a jam session | |
-| `--name <name>` | | Your name in jam sessions | User |
+| `--host` | | Host a group session | |
+| `--join <code>` | | Join a group session | |
+| `--name <name>` | | Your name in group sessions | User |
 | `--help` | `-h` | Show help | |
 
 ## Keyboard Controls
@@ -156,7 +156,7 @@ Work together with friends in real-time collaborative pomodoro sessions:
 ```bash
 # Host a session
 pomotui --host --name "Alice"
-# Output shows: JAM SESSION: XYZ234
+# Output shows: SESSION: XYZ234
 
 # Join a session (on another computer)
 pomotui --join XYZ234 --name "Bob"
