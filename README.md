@@ -2,7 +2,7 @@
 
 A terminal-based Pomodoro timer with lofi music integration, built with Bun, Ink, and React.
 
-<img width="2846" height="1260" alt="image" src="https://github.com/user-attachments/assets/74969ae2-8a35-4fcc-b0f1-18c5970011d8" />
+<img width="2866" height="1116" alt="image" src="https://github.com/user-attachments/assets/0d450da7-8067-4e39-8bbf-085dd76ed7f8" />
 
 
 ## Features
