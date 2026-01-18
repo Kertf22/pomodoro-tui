@@ -45,17 +45,13 @@ bun run build
 
 ## Requirements
 
-- For music playback (optional): `mpv`, `ffplay`, `cvlc`, or `mplayer`
+- For music playback (optional): `mpv`
 
 ### Installing Audio Players (for music)
 
 **Linux (Debian/Ubuntu):**
 ```bash
 sudo apt install mpv
-# or
-sudo apt install ffmpeg  # includes ffplay
-# or
-sudo apt install vlc
 ```
 
 **macOS:**
