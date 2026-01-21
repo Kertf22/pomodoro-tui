@@ -28,7 +28,8 @@ export function getPlatformInfo(): PlatformInfo {
   }
 
   // Map architecture
-  switch (arch) {
+  const archStr = arch as string;
+  switch (archStr) {
     case "x64":
     case "amd64":
       normalizedArch = "x64";

@@ -16,7 +16,7 @@ export interface AppConfig {
   pomodoro: PomodoroConfig;
   historyFile?: string;
   musicMode: MusicMode;
-  volume: number;
+  volume?: number;
   jam: JamConfig;
 }
 
@@ -164,7 +164,7 @@ export function parseConfig(): AppConfig | null {
       musicMode = values.music as MusicMode;
     }
 
-    let volume = 50;
+    let volume: number | undefined = undefined;
     if (values.volume) {
       const vol = parseInt(values.volume, 10);
       if (isNaN(vol) || vol < 0 || vol > 100) {
