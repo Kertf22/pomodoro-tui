@@ -6,6 +6,8 @@ export interface Pet {
   frames: string[];
 }
 
+export const PET_ANIMATION_INTERVAL_MS = 300;
+
 export const PETS: Pet[] = [
   {
     id: "cat",
@@ -69,10 +71,4 @@ export function getNextPetId(currentId: string): string {
   const currentIndex = PETS.findIndex((pet) => pet.id === currentId);
   const nextIndex = (currentIndex + 1) % PETS.length;
   return PETS[nextIndex].id;
-}
-
-export function getPreviousPetId(currentId: string): string {
-  const currentIndex = PETS.findIndex((pet) => pet.id === currentId);
-  const prevIndex = (currentIndex - 1 + PETS.length) % PETS.length;
-  return PETS[prevIndex].id;
 }

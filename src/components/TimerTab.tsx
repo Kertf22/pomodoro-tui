@@ -2,11 +2,21 @@ import React, { useState, useEffect } from "react";
 import { Box, Text } from "ink";
 import type { PomodoroState, PomodoroConfig, JamParticipant } from "../types";
 import { renderBigText } from "../ui";
-import { getSessionColor, getSessionLabel, getSessionDuration, getConnectionDisplay } from "../utils";
+import {
+  getSessionColor,
+  getSessionLabel,
+  getSessionDuration,
+  getConnectionDisplay,
+} from "../utils";
 import type { JamConnectionState } from "../types";
 import { TaskList } from "./TaskList";
 import type { Project, ProjectTask } from "../projects";
-import { getPetById, getPetFrame, type Pet } from "../pets";
+import {
+  getPetById,
+  getPetFrame,
+  PET_ANIMATION_INTERVAL_MS,
+  type Pet,
+} from "../pets";
 
 interface TimerTabProps {
   state: PomodoroState;
@@ -63,7 +73,13 @@ export function TimerTab({
   const sessionDuration = getSessionDuration(session, config) || 1;
   const progress = (state.timeRemaining / (sessionDuration * 60)) * 100;
   const progressBarLength = 40;
-  const filledLength = Math.max(0, Math.min(progressBarLength, Math.round((progressBarLength * progress) / 100)));
+  const filledLength = Math.max(
+    0,
+    Math.min(
+      progressBarLength,
+      Math.round((progressBarLength * progress) / 100),
+    ),
+  );
   const progressBar =
     "█".repeat(filledLength) + "░".repeat(progressBarLength - filledLength);
 
@@ -73,17 +89,18 @@ export function TimerTab({
   // Pet animation
   const [petFrame, setPetFrame] = useState(0);
   const pet = getPetById(petId);
-  const isMusicPlaying = !musicStatus.includes("(paused)") && !musicStatus.includes("Off");
+  const isMusicPlaying =
+    !musicStatus.includes("(paused)") && !musicStatus.includes("Off");
 
   useEffect(() => {
     if (!isMusicPlaying || !pet || pet.id === "none") return;
 
     const interval = setInterval(() => {
       setPetFrame((prev) => (prev + 1) % pet.frames.length);
-    }, 300);
+    }, PET_ANIMATION_INTERVAL_MS);
 
     return () => clearInterval(interval);
-  }, [isMusicPlaying, pet]);
+  }, [isMusicPlaying, pet?.id]);
 
   const dancingPet = isMusicPlaying && pet ? getPetFrame(pet, petFrame) : "";
 
@@ -130,7 +147,9 @@ export function TimerTab({
 
             {jamParticipants.length > 0 && (
               <Box marginY={1} flexDirection="column" alignItems="center">
-                <Text color="gray">Participants ({jamParticipants.length}):</Text>
+                <Text color="gray">
+                  Participants ({jamParticipants.length}):
+                </Text>
                 {(() => {
                   let transferIndex = 0;
                   return jamParticipants.map((p) => {
@@ -173,17 +192,21 @@ export function TimerTab({
         {!isJamMode && (
           <Box marginY={1}>
             <Text color="gray">
-              Today: {todayStats.pomodoros} pomodoros ({todayStats.totalMinutes}m)
+              Today: {todayStats.pomodoros} pomodoros ({todayStats.totalMinutes}
+              m)
             </Text>
           </Box>
         )}
         <Box marginY={1}>
           <Text color="gray">
-            Work: {config.workDuration}m | Short: {config.shortBreakDuration}m | Long: {config.longBreakDuration}m
+            Work: {config.workDuration}m | Short: {config.shortBreakDuration}m |
+            Long: {config.longBreakDuration}m
           </Text>
         </Box>
         <Box marginY={1}>
-          <Text color="magenta">{musicStatus} {dancingPet}</Text>
+          <Text color="magenta">
+            {musicStatus} {dancingPet}
+          </Text>
         </Box>
       </Box>
 
